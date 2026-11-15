@@ -71,6 +71,20 @@ def _has_activity_sensor(ctx: DetectorContext) -> tuple[bool, str]:
     return (n > 0, f"{n} phone activity sensor(s)")
 
 
+def _effective_area_id(ent: Any, d_reg: Any) -> str | None:
+    """The area an entity is in, as HA resolves it: the entity's own
+    area if set, otherwise its device's. Most entities inherit their
+    area from the device and leave their own `area_id` empty."""
+    if ent.area_id:
+        return ent.area_id
+    device_id = getattr(ent, "device_id", None)
+    if device_id and d_reg is not None:
+        device = d_reg.async_get(device_id)
+        if device is not None:
+            return device.area_id
+    return None
+
+
 def _has_area_coverage(ctx: DetectorContext) -> tuple[bool, str]:
     """≥ 50% of entities (non-system) have areas assigned."""
     total = 0
@@ -80,15 +94,19 @@ def _has_area_coverage(ctx: DetectorContext) -> tuple[bool, str]:
             area_registry as ar,
         )
         from homeassistant.helpers import (
+            device_registry as dr,
+        )
+        from homeassistant.helpers import (
             entity_registry as er,
         )
 
         reg = er.async_get(ctx.hass)
+        d_reg = dr.async_get(ctx.hass)
         for entry in reg.entities.values():
             if entry.disabled_by or entry.hidden_by:
                 continue
             total += 1
-            if entry.area_id:
+            if _effective_area_id(entry, d_reg):
                 with_area += 1
         area_reg = ar.async_get(ctx.hass)
         n_areas = len(list(area_reg.async_list_areas()))
@@ -191,11 +209,13 @@ def _device_class_areas(
     """
     try:
         from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er
     except ImportError:
         return (0, 0)
     e_reg = er.async_get(ctx.hass)
     a_reg = ar.async_get(ctx.hass)
+    d_reg = dr.async_get(ctx.hass)
     areas_with = set()
     # v1.14.11: HA renamed `AreaEntry.area_id` → `AreaEntry.id`.
     # Tolerate both via getattr so we don't break on either side
@@ -208,14 +228,15 @@ def _device_class_areas(
     for ent in e_reg.entities.values():
         if ent.disabled_by or ent.hidden_by:
             continue
-        if not ent.area_id:
+        area_id = _effective_area_id(ent, d_reg)
+        if not area_id:
             continue
         state = ctx.hass.states.get(ent.entity_id)
         if state is None:
             continue
         dc = state.attributes.get("device_class")
         if isinstance(dc, str) and dc.lower() in device_classes:
-            areas_with.add(ent.area_id)
+            areas_with.add(area_id)
     return (len(areas_with), len(all_areas))
 
 
@@ -249,22 +270,25 @@ def _has_multi_temp_per_class(ctx: DetectorContext) -> tuple[bool, str]:
     """Location-proposal + physical-device-link need ≥ 2 tagged
     siblings per device_class. Check at least one class meets that."""
     try:
+        from homeassistant.helpers import device_registry as dr
         from homeassistant.helpers import entity_registry as er
     except ImportError:
         return (False, "registry not available")
     e_reg = er.async_get(ctx.hass)
+    d_reg = dr.async_get(ctx.hass)
     by_class: dict[str, set[str]] = {}
     for ent in e_reg.entities.values():
         if ent.disabled_by or ent.hidden_by:
             continue
-        if not ent.area_id:
+        area_id = _effective_area_id(ent, d_reg)
+        if not area_id:
             continue
         state = ctx.hass.states.get(ent.entity_id)
         if state is None:
             continue
         dc = state.attributes.get("device_class")
         if isinstance(dc, str):
-            by_class.setdefault(dc.lower(), set()).add(ent.area_id)
+            by_class.setdefault(dc.lower(), set()).add(area_id)
     qualifying = [c for c, areas in by_class.items() if len(areas) >= 2]
     return (
         len(qualifying) > 0,
