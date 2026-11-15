@@ -564,7 +564,7 @@ class InsightStore:
           For every detector that ran end-to-end this scan, any insight
           PREVIOUSLY in the store from that detector that wasn't re-emitted
           is now stale and gets deleted — UNLESS the user has acted on it
-          (applied / dismissed) or it's currently snoozed. Insights from
+          (applied / dismissed / retired) or it's currently snoozed. Insights from
           detectors that didn't run (disabled, canceled, timed-out) are
           untouched, since we have no fresh signal about them.
 
@@ -595,6 +595,7 @@ class InsightStore:
             f"  {emitted_clause} "
             f"  AND applied_at IS NULL "
             f"  AND dismissed_at IS NULL "
+            f"  AND retired_at IS NULL "
             f"  AND (snoozed_until IS NULL "
             f"       OR snoozed_until <= strftime('%s','now')) ",
             params,
@@ -610,6 +611,7 @@ class InsightStore:
             f"  {emitted_clause} "
             f"  AND applied_at IS NULL "
             f"  AND dismissed_at IS NULL "
+            f"  AND retired_at IS NULL "
             f"  AND (snoozed_until IS NULL "
             f"       OR snoozed_until <= strftime('%s','now')) ",
             params,
