@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..lib.automation_keys import actions_of, trigger_platform, triggers_of
+
 _VALID_MODES = frozenset({"single", "restart", "queued", "parallel"})
 
 
@@ -20,7 +22,7 @@ def validate_automation(payload: dict[str, Any]) -> list[str]:
     """
     errors: list[str] = []
 
-    triggers = payload.get("trigger")
+    triggers = triggers_of(payload)
     if triggers is None:
         errors.append("missing 'trigger'")
     elif not isinstance(triggers, list):
@@ -31,10 +33,10 @@ def validate_automation(payload: dict[str, Any]) -> list[str]:
         for i, trigger in enumerate(triggers):
             if not isinstance(trigger, dict):
                 errors.append(f"trigger[{i}] must be a dict")
-            elif "platform" not in trigger:
+            elif trigger_platform(trigger) is None:
                 errors.append(f"trigger[{i}] missing 'platform'")
 
-    actions = payload.get("action")
+    actions = actions_of(payload)
     if actions is None:
         errors.append("missing 'action'")
     elif not isinstance(actions, list):

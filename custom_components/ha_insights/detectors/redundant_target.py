@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from ..insight import Insight, InsightKind
+from ..lib.automation_keys import actions_of
 from .base import Detector, DetectorContext, register_detector
 
 if TYPE_CHECKING:
@@ -71,7 +72,7 @@ class RedundantTargetDetector(Detector):
         insights: list[Insight] = []
 
         for auto in ctx.existing_automations:
-            targets = _extract_target_entities(auto.get("action"))
+            targets = _extract_target_entities(actions_of(auto))
             if len(targets) < 2:
                 continue
 

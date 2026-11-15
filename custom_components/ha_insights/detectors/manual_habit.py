@@ -35,6 +35,12 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.util import dt as dt_util
 
 from ..insight import Insight, InsightKind
+from ..lib.automation_keys import (
+    actions_of,
+    step_service,
+    trigger_platform,
+    triggers_of,
+)
 from .base import Detector, DetectorContext, register_detector
 
 if TYPE_CHECKING:
@@ -482,14 +488,14 @@ class ManualHabitDetector(Detector):
         sigs: set[tuple[str, str, int]] = set()
         existing = ctx.existing_automations or []
         for auto in existing:
-            triggers = auto.get("trigger") or []
+            triggers = triggers_of(auto) or []
             if isinstance(triggers, dict):
                 triggers = [triggers]
             time_triggers: list[str] = []
             for trig in triggers:
                 if not isinstance(trig, dict):
                     continue
-                if trig.get("platform") != "time":
+                if trigger_platform(trig) != "time":
                     continue
                 at = trig.get("at")
                 if isinstance(at, str):
@@ -498,13 +504,13 @@ class ManualHabitDetector(Detector):
                     time_triggers.extend(t for t in at if isinstance(t, str))
             if not time_triggers:
                 continue
-            actions = auto.get("action") or []
+            actions = actions_of(auto) or []
             if isinstance(actions, dict):
                 actions = [actions]
             for act in actions:
                 if not isinstance(act, dict):
                     continue
-                svc = act.get("service") or ""
+                svc = step_service(act) or ""
                 if not isinstance(svc, str) or "." not in svc:
                     continue
                 try:

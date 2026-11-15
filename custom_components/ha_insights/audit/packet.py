@@ -27,6 +27,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from ..lib.automation_keys import (
+    actions_of,
+    step_service,
+    trigger_platform,
+    triggers_of,
+)
+
 if TYPE_CHECKING:
     from .._script_targets import collect_script_targets  # noqa: F401
     from ..detectors.hierarchy import EntityHierarchy
@@ -177,10 +184,10 @@ def build_audit_packet(
     # Extract target + trigger entities so future observation primitives
     # can iterate without re-parsing the YAML each time.
     target_entities: set[str] = _extract_target_entities(
-        automation.get("action")
+        actions_of(automation)
     )
     trigger_entities: set[str] = set()
-    for trig in _as_list(automation.get("trigger")):
+    for trig in _as_list(triggers_of(automation)):
         if not isinstance(trig, dict):
             continue
         tid = trig.get("entity_id")
@@ -366,10 +373,10 @@ def _observe_long_on_duration(
     # action targeting any of these entities.
     has_turn_on = False
     has_auto_off_min: int | None = None
-    for action in _as_list(automation.get("action")):
+    for action in _as_list(actions_of(automation)):
         if not isinstance(action, dict):
             continue
-        svc = action.get("service") or ""
+        svc = step_service(action) or ""
         if isinstance(svc, str) and svc.endswith(".turn_on"):
             has_turn_on = True
         # Look for a `delay` followed by turn_off, or a `for:` duration.
@@ -457,10 +464,10 @@ def _observe_trigger_time_drift(
     from ..apply.conflict_scanner import _as_list, _extract_target_entities
 
     trigger_times: list[str] = []
-    for trig in _as_list(automation.get("trigger")):
+    for trig in _as_list(triggers_of(automation)):
         if not isinstance(trig, dict):
             continue
-        if trig.get("platform") != "time":
+        if trigger_platform(trig) != "time":
             continue
         at = trig.get("at")
         if isinstance(at, str):
@@ -471,10 +478,10 @@ def _observe_trigger_time_drift(
     # We need a target entity AND a target state to know what
     # transition counts as "the automation fired".
     target_state: str | None = None
-    for action in _as_list(automation.get("action")):
+    for action in _as_list(actions_of(automation)):
         if not isinstance(action, dict):
             continue
-        svc = action.get("service") or ""
+        svc = step_service(action) or ""
         if isinstance(svc, str):
             if svc.endswith(".turn_on"):
                 target_state = "on"
@@ -485,7 +492,7 @@ def _observe_trigger_time_drift(
     if target_state is None:
         return []
 
-    targets = _extract_target_entities(automation.get("action"))
+    targets = _extract_target_entities(actions_of(automation))
     if not targets:
         return []
 

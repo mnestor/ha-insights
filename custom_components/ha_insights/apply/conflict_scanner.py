@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..insight import Insight
+from ..lib.automation_keys import actions_of, trigger_platform, triggers_of
 
 DEFAULT_TIME_WINDOW_MIN = 10
 
@@ -108,10 +109,10 @@ def _automations_overlap(
          sees the resulting state change at a fixed clock time but the
          automation triggers on a celestial event.
     """
-    a_triggers = _as_list(a.get("trigger"))
-    b_triggers = _as_list(b.get("trigger"))
-    a_entities = _extract_target_entities(a.get("action", []))
-    b_entities = _extract_target_entities(b.get("action", []))
+    a_triggers = _as_list(triggers_of(a))
+    b_triggers = _as_list(triggers_of(b))
+    a_entities = _extract_target_entities(actions_of(a, []))
+    b_entities = _extract_target_entities(actions_of(b, []))
     # v1.5.24: expand both sides to include group / scene members.
     # `light.backyard_garden_lights` (a group) intersects with an
     # automation that targets any of its 6 members. Same intent —
@@ -126,10 +127,10 @@ def _automations_overlap(
 
     # Time-trigger overlap: same trigger time AND same target entity
     for at in a_triggers:
-        if not isinstance(at, dict) or at.get("platform") != "time":
+        if not isinstance(at, dict) or trigger_platform(at) != "time":
             continue
         for bt in b_triggers:
-            if not isinstance(bt, dict) or bt.get("platform") != "time":
+            if not isinstance(bt, dict) or trigger_platform(bt) != "time":
                 continue
             if _times_close(at.get("at"), bt.get("at"), time_window_min):
                 return True
@@ -173,8 +174,8 @@ def _automations_overlap(
         _has_event_driven_trigger(a_triggers)
         and _has_schedule_like_trigger(b_triggers)
     ):
-        a_services = _extract_service_targets(a.get("action", []))
-        b_services = _extract_service_targets(b.get("action", []))
+        a_services = _extract_service_targets(actions_of(a, []))
+        b_services = _extract_service_targets(actions_of(b, []))
         for service, a_ents in a_services.items():
             b_ents = b_services.get(service)
             if not b_ents:
@@ -196,7 +197,7 @@ def _all_platform_time(triggers: list[Any]) -> bool:
     if not triggers:
         return False
     return all(
-        isinstance(t, dict) and t.get("platform") == "time" for t in triggers
+        isinstance(t, dict) and trigger_platform(t) == "time" for t in triggers
     )
 
 
@@ -214,7 +215,7 @@ _SCHEDULE_LIKE_PLATFORMS: frozenset[str] = frozenset(
 def _has_schedule_like_trigger(triggers: list[Any]) -> bool:
     """Whether any trigger fires on a schedule-driven event."""
     for t in triggers:
-        if isinstance(t, dict) and t.get("platform") in _SCHEDULE_LIKE_PLATFORMS:
+        if isinstance(t, dict) and trigger_platform(t) in _SCHEDULE_LIKE_PLATFORMS:
             return True
     return False
 
@@ -237,7 +238,7 @@ def _has_event_driven_trigger(triggers: list[Any]) -> bool:
     """Whether any trigger fires on an entity/event condition rather
     than a schedule."""
     for t in triggers:
-        if isinstance(t, dict) and t.get("platform") in _EVENT_DRIVEN_PLATFORMS:
+        if isinstance(t, dict) and trigger_platform(t) in _EVENT_DRIVEN_PLATFORMS:
             return True
     return False
 
@@ -269,7 +270,7 @@ def _state_trigger_signatures(
     """
     sigs: set[tuple[str, str | None, int | None]] = set()
     for t in triggers:
-        if not isinstance(t, dict) or t.get("platform") != "state":
+        if not isinstance(t, dict) or trigger_platform(t) != "state":
             continue
         eid = t.get("entity_id")
         to_val = t.get("to")

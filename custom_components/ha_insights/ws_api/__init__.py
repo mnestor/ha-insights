@@ -18,6 +18,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
 from ..const import DOMAIN
+from ..lib.automation_keys import actions_of, step_service, triggers_of
 from ..lib.title_cleanup import (
     strip_already_automated_cta as _strip_already_automated_cta,
 )
@@ -526,7 +527,7 @@ async def ws_list(
             label = auto.get("alias") or auto.get("id") or "(unnamed automation)"
             referenced: set[str] = set()
             # Trigger entity references
-            for t in _as_list(auto.get("trigger")):
+            for t in _as_list(triggers_of(auto)):
                 if not isinstance(t, dict):
                     continue
                 ti = t.get("entity_id")
@@ -535,13 +536,13 @@ async def ws_list(
                 elif isinstance(ti, list):
                     referenced.update(e for e in ti if isinstance(e, str))
             # Action target references — reuse the conflict scanner helper
-            referenced |= _extract_target_entities(auto.get("action"))
+            referenced |= _extract_target_entities(actions_of(auto))
             # Action SERVICE calls — `service: script.X` doesn't appear as
             # a target so _extract_target_entities misses it. Add explicitly.
-            for action in _as_list(auto.get("action")):
+            for action in _as_list(actions_of(auto)):
                 if not isinstance(action, dict):
                     continue
-                svc = action.get("service")
+                svc = step_service(action)
                 if isinstance(svc, str) and svc.startswith("script."):
                     # script.evening_lights → script.evening_lights (entity_id form)
                     referenced.add(svc)
@@ -570,7 +571,7 @@ async def ws_list(
             try:
                 from ..apply.conflict_scanner import _extract_target_entities
 
-                out |= _extract_target_entities(ins.payload.get("action"))
+                out |= _extract_target_entities(actions_of(ins.payload))
             except Exception:
                 pass
         return out

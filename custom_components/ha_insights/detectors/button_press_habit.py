@@ -50,6 +50,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from ..insight import Insight, InsightKind
+from ..lib.automation_keys import actions_of, triggers_of
 from ..lib.coupling_strength import (
     apply_tier_demotion,
     compute_coupling,
@@ -425,7 +426,7 @@ class ButtonPressHabitDetector(Detector):
         differs only in event_type)."""
         automations = ctx.existing_automations or []
         for auto in automations:
-            triggers = auto.get("trigger") or []
+            triggers = triggers_of(auto) or []
             if not isinstance(triggers, list):
                 triggers = [triggers]
             triggers_match = False
@@ -443,7 +444,7 @@ class ButtonPressHabitDetector(Detector):
                     break
             if not triggers_match:
                 continue
-            actions = auto.get("action") or []
+            actions = actions_of(auto) or []
             if not isinstance(actions, list):
                 actions = [actions]
             for a in actions:

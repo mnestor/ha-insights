@@ -40,6 +40,12 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.util import dt as dt_util
 
 from ..insight import Insight, InsightKind
+from ..lib.automation_keys import (
+    actions_of,
+    step_service,
+    trigger_platform,
+    triggers_of,
+)
 from .base import Detector, DetectorContext, register_detector
 
 if TYPE_CHECKING:
@@ -93,11 +99,11 @@ class TriggerDriftDetector(Detector):
         ctx: DetectorContext,
         cutoff: datetime,
     ) -> list[Insight]:
-        triggers = _as_list(automation.get("trigger"))
+        triggers = _as_list(triggers_of(automation))
         time_triggers = [
             t
             for t in triggers
-            if isinstance(t, dict) and t.get("platform") == "time"
+            if isinstance(t, dict) and trigger_platform(t) == "time"
         ]
         if not time_triggers:
             return []
@@ -108,7 +114,7 @@ class TriggerDriftDetector(Detector):
         # call, script, automation.trigger) is too indirect to evaluate
         # for drift; skip silently.
         action_targets = _extract_actionable_targets(
-            automation.get("action", [])
+            actions_of(automation, [])
         )
         if not action_targets:
             return []
@@ -304,7 +310,7 @@ def _extract_actionable_targets(actions: Any) -> list[tuple[str, str]]:
     for action in _as_list(actions):
         if not isinstance(action, dict):
             continue
-        service = action.get("service")
+        service = step_service(action)
         if not isinstance(service, str) or "." not in service:
             continue
         _, verb = service.split(".", 1)

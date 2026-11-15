@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from homeassistant.core import CoreState, HomeAssistant
 
+from ..lib.automation_keys import actions_of
 from .base import DETECTORS, Detector, DetectorContext, register_detector
 
 if TYPE_CHECKING:
@@ -1226,7 +1227,7 @@ def _entities_acted_on(
     except Exception:  # pragma: no cover — defensive
         return frozenset()
     for auto in existing_automations:
-        actions = auto.get("action")
+        actions = actions_of(auto)
         if actions is None:
             continue
         try:

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from ..apply.validator import validate_automation
+from ..lib.automation_keys import actions_of, triggers_of
 from .agent_client import (
     AttemptAudit,
     _extract_conversation_id,
@@ -221,7 +222,7 @@ def _normalize_action_key_style(
                 return "service"
         return None
 
-    target_style = _action_key_style(original.get("action"))
+    target_style = _action_key_style(actions_of(original))
     if target_style is None:
         return
     other = "service" if target_style == "action" else "action"
@@ -251,7 +252,7 @@ def _normalize_action_key_style(
                         if isinstance(seq, list):
                             _rewrite(seq)
 
-    _rewrite(refined.get("action"))
+    _rewrite(actions_of(refined))
 
 
 def _collect_entity_ids(
@@ -488,15 +489,13 @@ def _looks_structurally_incomplete(payload: dict[str, Any]) -> bool:
     user a more actionable error than "trigger[0] must be a dict" if the
     real issue is "the YAML stopped halfway through emitting the trigger."
     """
-    required = {"alias", "trigger", "action", "mode"}
-    missing = required - set(payload.keys())
     # Missing 'action' is the dead-giveaway truncation pattern: LLMs emit
     # alias -> trigger -> action -> mode in order, so 'action' missing
     # almost always means the response stopped between trigger and action.
-    if "action" in missing and "trigger" in payload:
+    if actions_of(payload) is None and triggers_of(payload) is not None:
         return True
     # Trigger present but not a list-of-dicts (e.g. partial string value)
-    triggers = payload.get("trigger")
+    triggers = triggers_of(payload)
     if triggers is not None and not isinstance(triggers, list):
         return True
     if isinstance(triggers, list):

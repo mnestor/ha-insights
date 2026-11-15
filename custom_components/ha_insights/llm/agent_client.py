@@ -14,6 +14,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..lib.automation_keys import (
+    actions_of,
+    conditions_of,
+    step_service,
+    trigger_platform,
+    triggers_of,
+)
 from .redactor import RedactionMap, Redactor
 
 if TYPE_CHECKING:
@@ -215,24 +222,24 @@ def _summarize_payload(payload: dict) -> str:
     lines: list[str] = []
     if alias := payload.get("alias"):
         lines.append(f"  Alias: {alias}")
-    if triggers := payload.get("trigger"):
+    if triggers := triggers_of(payload):
         for trigger in triggers if isinstance(triggers, list) else [triggers]:
             if isinstance(trigger, dict):
-                platform = trigger.get("platform", "?")
+                platform = trigger_platform(trigger) or "?"
                 at = trigger.get("at")
                 if platform == "time" and at:
                     lines.append(f"  Trigger: time {at}")
                 else:
                     lines.append(f"  Trigger: {platform}")
-    if conditions := payload.get("condition"):
+    if conditions := conditions_of(payload):
         for cond in conditions if isinstance(conditions, list) else [conditions]:
             if isinstance(cond, dict) and cond.get("condition") == "time":
                 weekdays = cond.get("weekday", [])
                 lines.append(f"  Days: {', '.join(weekdays)}")
-    if actions := payload.get("action"):
+    if actions := actions_of(payload):
         for action in actions if isinstance(actions, list) else [actions]:
             if isinstance(action, dict):
-                service = action.get("service", "?")
+                service = step_service(action) or "?"
                 target = action.get("target", {})
                 eid = target.get("entity_id") if isinstance(target, dict) else None
                 # Spell it out so the LLM doesn't confuse the service name

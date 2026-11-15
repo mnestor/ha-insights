@@ -21,6 +21,13 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from ..lib.automation_keys import (
+    actions_key,
+    actions_of,
+    trigger_platform,
+    triggers_key,
+    triggers_of,
+)
 from .packet import (
     OBS_ENTITY_SILENT,
     OBS_LONG_ON_DURATION,
@@ -91,12 +98,12 @@ def _fix_redundant_target(
     if not isinstance(container, str) or not redundant_members:
         return None
 
-    actions = automation.get("action")
+    actions = actions_of(automation)
     if actions is None:
         return None
     if not isinstance(actions, list):
         actions = [actions]
-        automation["action"] = actions
+        automation[actions_key(automation)] = actions
 
     redundant_set = set(redundant_members)
     dropped_count = 0
@@ -155,12 +162,12 @@ def _fix_long_on_duration(
         # Already big enough — nothing to do
         return None
 
-    actions = automation.get("action")
+    actions = actions_of(automation)
     if actions is None:
         return None
     if not isinstance(actions, list):
         actions = [actions]
-        automation["action"] = actions
+        automation[actions_key(automation)] = actions
 
     for action in actions:
         if not isinstance(action, dict):
@@ -211,18 +218,18 @@ def _fix_trigger_time_drift(
     if new_time == trigger_time:
         return None
 
-    triggers = automation.get("trigger")
+    triggers = triggers_of(automation)
     if triggers is None:
         return None
     if not isinstance(triggers, list):
         triggers = [triggers]
-        automation["trigger"] = triggers
+        automation[triggers_key(automation)] = triggers
 
     changed = False
     for trig in triggers:
         if not isinstance(trig, dict):
             continue
-        if trig.get("platform") != "time":
+        if trigger_platform(trig) != "time":
             continue
         if trig.get("at") == trigger_time:
             trig["at"] = new_time

@@ -29,6 +29,7 @@ from ..audit.traces import (
     fetch_trace_aggregates,
 )
 from ..insight import Insight, InsightKind
+from ..lib.automation_keys import actions_of, triggers_of
 from .base import Detector, DetectorContext, Maturity, register_detector
 
 if TYPE_CHECKING:
@@ -266,8 +267,8 @@ class AutomationAuditDetector(Detector):
 
             eids: set[str] = set()
             for auto in audit_targets:
-                eids.update(_extract_target_entities(auto.get("action")))
-                for trig in _as_list(auto.get("trigger")):
+                eids.update(_extract_target_entities(actions_of(auto)))
+                for trig in _as_list(triggers_of(auto)):
                     if not isinstance(trig, dict):
                         continue
                     tid = trig.get("entity_id")

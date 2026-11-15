@@ -358,11 +358,12 @@ def collect_audit_target_entities(
     Stable result so the set of entities that get rolled up is
     deterministic for a given automations.yaml."""
     from ..apply.conflict_scanner import _as_list, _extract_target_entities
+    from ..lib.automation_keys import actions_of, triggers_of
 
     seen: set[str] = set()
     for auto in existing_automations:
-        seen.update(_extract_target_entities(auto.get("action")))
-        for trig in _as_list(auto.get("trigger")):
+        seen.update(_extract_target_entities(actions_of(auto)))
+        for trig in _as_list(triggers_of(auto)):
             if not isinstance(trig, dict):
                 continue
             tid = trig.get("entity_id")
