@@ -14,6 +14,7 @@ from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from itertools import chain
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,16 @@ class StateEventBuffer:
     # we log a warning the first time we observe the cap engaging so the
     # user knows their lookback window is being trimmed by volume.
     DEFAULT_MAX_EVENTS = 500_000
+    # Polled/metering domains go to their own, smaller pool. Without this,
+    # a few hundred chatty sensors (BLE distances, power metering, mmWave
+    # energy) fill the shared cap within hours, and because backfill
+    # inserts entity by entity, every further event evicted the oldest
+    # *entity's* whole multi-day history from the front of the deque.
+    # Sensor events now only evict other sensor events. Backfill never
+    # loads these domains, so the pool only ever holds live data anyway.
+    SENSOR_DOMAINS: frozenset[str] = frozenset({"sensor"})
+    DEFAULT_SENSOR_MAX_EVENTS = 200_000
+    DEFAULT_SENSOR_MAX_AGE = timedelta(hours=48)
 
     def __init__(
         self,
@@ -115,6 +126,8 @@ class StateEventBuffer:
         max_events: int | None = None,
         area_filter: frozenset[str] | None = None,
         is_blocked: Callable[[str], bool] | None = None,
+        sensor_max_events: int | None = None,
+        sensor_max_age: timedelta | None = None,
     ) -> None:
         self._max_age = max_age if max_age is not None else self.DEFAULT_MAX_AGE
         self._max_events = (
@@ -125,6 +138,20 @@ class StateEventBuffer:
         self._is_blocked = is_blocked
         self._events: deque[StateEvent] = deque(maxlen=self._max_events)
         self._cap_warned: bool = False
+        self._sensor_max_events = (
+            sensor_max_events
+            if sensor_max_events is not None
+            else self.DEFAULT_SENSOR_MAX_EVENTS
+        )
+        self._sensor_max_age = (
+            sensor_max_age
+            if sensor_max_age is not None
+            else self.DEFAULT_SENSOR_MAX_AGE
+        )
+        self._sensor_events: deque[StateEvent] = deque(
+            maxlen=self._sensor_max_events
+        )
+        self._sensor_cap_logged: bool = False
 
     @property
     def max_age(self) -> timedelta:
@@ -150,6 +177,9 @@ class StateEventBuffer:
             return False
         if self._is_blocked is not None and self._is_blocked(event.entity_id):
             return False
+        if event.domain in self.SENSOR_DOMAINS:
+            self._add_sensor(event)
+            return True
         if not self._cap_warned and len(self._events) >= self._max_events:
             import logging
 
@@ -162,6 +192,32 @@ class StateEventBuffer:
             self._cap_warned = True
         self._events.append(event)
         return True
+
+    def _add_sensor(self, event: StateEvent) -> None:
+        """Append to the sensor pool, aging out events past sensor_max_age.
+
+        The pool is live-only (chronological), so trimming from the left
+        against the newest event's timestamp is exact and amortized O(1).
+        """
+        cutoff = event.timestamp - self._sensor_max_age
+        pool = self._sensor_events
+        while pool and pool[0].timestamp < cutoff:
+            pool.popleft()
+        if not self._sensor_cap_logged and len(pool) >= self._sensor_max_events:
+            import logging
+
+            logging.getLogger(__name__).info(
+                "HA Insights sensor event pool hit its %d-event cap; oldest "
+                "sensor events are dropped. Non-sensor history is unaffected.",
+                self._sensor_max_events,
+            )
+            self._sensor_cap_logged = True
+        pool.append(event)
+
+    @property
+    def sensor_event_count(self) -> int:
+        """Events currently held in the separate sensor pool."""
+        return len(self._sensor_events)
 
     def query(
         self,
@@ -179,7 +235,7 @@ class StateEventBuffer:
         boot with old_state=None, creating a correlated burst that
         false-positives most pattern detectors.
         """
-        for ev in self._events:
+        for ev in chain(self._events, self._sensor_events):
             if entity_id is not None and ev.entity_id != entity_id:
                 continue
             if since is not None and ev.timestamp < since:
@@ -204,6 +260,10 @@ class StateEventBuffer:
         while self._events and self._events[0].timestamp < cutoff:
             self._events.popleft()
             removed += 1
+        sensor_cutoff = now - min(self._max_age, self._sensor_max_age)
+        while self._sensor_events and self._sensor_events[0].timestamp < sensor_cutoff:
+            self._sensor_events.popleft()
+            removed += 1
         return removed
 
     def rename_entity(self, old_id: str, new_id: str) -> int:
@@ -215,8 +275,15 @@ class StateEventBuffer:
         if old_id == new_id:
             return 0
         count = 0
-        rebuilt: deque[StateEvent] = deque()
-        for ev in self._events:
+        for pool_attr in ("_events", "_sensor_events"):
+            count += self._rename_in_pool(pool_attr, old_id, new_id)
+        return count
+
+    def _rename_in_pool(self, pool_attr: str, old_id: str, new_id: str) -> int:
+        pool: deque[StateEvent] = getattr(self, pool_attr)
+        count = 0
+        rebuilt: deque[StateEvent] = deque(maxlen=pool.maxlen)
+        for ev in pool:
             if ev.entity_id == old_id:
                 # Preserve every StateEvent field across rename, including
                 # v1.4/v1.5 additions (context_user_id, from_bootstrap,
@@ -243,17 +310,18 @@ class StateEventBuffer:
                 count += 1
             else:
                 rebuilt.append(ev)
-        self._events = rebuilt
+        setattr(self, pool_attr, rebuilt)
         return count
 
     def clear(self) -> int:
         """Drop every event in the buffer. Returns count removed."""
-        count = len(self._events)
+        count = len(self._events) + len(self._sensor_events)
         self._events.clear()
+        self._sensor_events.clear()
         return count
 
     def __len__(self) -> int:
-        return len(self._events)
+        return len(self._events) + len(self._sensor_events)
 
     def snapshot(self) -> tuple[StateEvent, ...]:
         """Return an immutable snapshot of every event currently buffered.
@@ -264,7 +332,7 @@ class StateEventBuffer:
         the snapshot. Cheap (single memcpy from deque to tuple) so it
         runs on the event loop before the heavy scan starts.
         """
-        return tuple(self._events)
+        return tuple(self._events) + tuple(self._sensor_events)
 
     def data_span_days(self) -> float:
         """Return how many days of data the buffer currently holds.
@@ -285,10 +353,12 @@ class StateEventBuffer:
         rather than trust `self._events[0]`. Cheap — O(n) over the
         deque, ~10k events even on big installs.
         """
-        if not self._events:
+        if not self._events and not self._sensor_events:
             return 0.0
         from datetime import UTC, datetime
 
-        earliest = min(ev.timestamp for ev in self._events)
+        earliest = min(
+            ev.timestamp for ev in chain(self._events, self._sensor_events)
+        )
         now = datetime.now(tz=UTC)
         return max(0.0, (now - earliest).total_seconds() / 86400.0)

@@ -437,8 +437,9 @@ async def run_all_detectors(
         snapshot = ctx.event_buffer.snapshot()
         _LOGGER.info(
             "HA Insights scan: snapshotted %d events for thread-safe scan "
-            "(blocked=%d explicit + %d implicit, area_filter=%d)",
+            "(%d in sensor pool, blocked=%d explicit + %d implicit, area_filter=%d)",
             len(snapshot),
+            getattr(ctx.event_buffer, "sensor_event_count", 0),
             len(ctx.blocked_entities),
             len(implicit_blocked),
             len(ctx.area_filter),
