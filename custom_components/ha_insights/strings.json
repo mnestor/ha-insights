@@ -43,6 +43,8 @@
           "allow_user_detectors": "Allow user-supplied detectors (advanced)",
           "enabled_detectors": "Detectors to run",
           "scan_areas": "Limit scans to these areas (empty = all areas)",
+          "llm_block_entities": "Blocked entities (never scanned or sent to the LLM)",
+          "blocked_devices": "Blocked devices (blocks all of each device's entities)",
           "scan_interval_hours": "Auto-scan every N hours (0 = manual only)"
         },
         "data_description": {
@@ -57,6 +59,8 @@
           "allow_user_detectors": "Off by default. When on, *.py files placed under your HA config dir at ha_insights_detectors/ load as community detectors. Each file is AST-scanned and rejected if it imports network/filesystem/subprocess modules or uses eval/exec/__import__, but the sandbox is best-effort — only enable for files you trust. See the writing-a-detector docs.",
           "enabled_detectors": "Pick which detectors run on every scan. Default = all. Disabling a detector skips its work entirely; enabling one explicitly overrides the auto-skip safety net (e.g. to force lagged_correlation on a large-event-buffer install).",
           "scan_areas": "Multi-pick HA areas. Empty = all areas (default). When set, detectors only see events from entities in the selected areas. Useful for limiting scope on large installs (e.g. living areas only).",
+          "llm_block_entities": "Entities Insights ignores completely: not buffered, not scanned, never included in LLM prompts (not even pseudonymized).",
+          "blocked_devices": "Every entity of these devices is blocked like a blocked entity, including entities the device gains later. Devices connected through a blocked device (hub children) are not blocked.",
           "scan_interval_hours": "0 = manual only (default; click Run Scan Now in the panel). 1+ = run all enabled detectors every N hours. The timer is registered after HA finishes startup so it never fires during boot."
         }
       },

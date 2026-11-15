@@ -11,7 +11,7 @@ this is the canonical event history that detectors query against.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -114,12 +114,15 @@ class StateEventBuffer:
         max_age: timedelta | None = None,
         max_events: int | None = None,
         area_filter: frozenset[str] | None = None,
+        is_blocked: Callable[[str], bool] | None = None,
     ) -> None:
         self._max_age = max_age if max_age is not None else self.DEFAULT_MAX_AGE
         self._max_events = (
             max_events if max_events is not None else self.DEFAULT_MAX_EVENTS
         )
         self._area_filter = area_filter if area_filter is not None else frozenset()
+        # entity_id -> True to drop the event (user entity/device blocklist).
+        self._is_blocked = is_blocked
         self._events: deque[StateEvent] = deque(maxlen=self._max_events)
         self._cap_warned: bool = False
 
@@ -144,6 +147,8 @@ class StateEventBuffer:
         being trimmed by volume rather than time.
         """
         if self._area_filter and event.area_id not in self._area_filter:
+            return False
+        if self._is_blocked is not None and self._is_blocked(event.entity_id):
             return False
         if not self._cap_warned and len(self._events) >= self._max_events:
             import logging

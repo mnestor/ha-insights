@@ -20,6 +20,7 @@ from homeassistant.helpers import entity_registry as er
 
 from . import ws_api
 from .config_flow import (
+    blocked_entity_checker,
     get_allow_user_detectors,
     get_audit_rollup_window_days,
     get_digest_settings,
@@ -86,7 +87,12 @@ async def _setup_entry_body(
     # Buffer max_age must >= lookback so backfilled events aren't immediately
     # eligible for prune (default buffer max is 7d, our default lookback 14d).
     buffer_max_age = timedelta(days=max(7, lookback_days))
-    buffer_ = StateEventBuffer(max_age=buffer_max_age)
+    # Blocked entities/devices never enter the buffer (live or backfill).
+    # An options change reloads the entry, which rebuilds the buffer.
+    buffer_ = StateEventBuffer(
+        max_age=buffer_max_age,
+        is_blocked=blocked_entity_checker(hass, entry),
+    )
 
     entity_reg = er.async_get(hass)
 
@@ -504,7 +510,7 @@ async def _setup_entry_body(
             target_eids = collect_audit_target_entities(autos)
             if not target_eids:
                 return
-            blocked = get_blocked_entities(entry)
+            blocked = get_blocked_entities(entry, hass)
             entry_data_ = hass.data.get(DOMAIN, {}).get(entry.entry_id)
             if not entry_data_:
                 return
@@ -764,7 +770,7 @@ async def _run_scheduled_scan(hass: HomeAssistant, entry_id: str) -> None:
         ctx = DetectorContext(
             hass=hass,
             event_buffer=buffer_,
-            blocked_entities=get_blocked_entities(entry),
+            blocked_entities=get_blocked_entities(entry, hass),
             area_filter=get_scan_areas(entry),
         )
         added = await run_all_detectors(hass, ctx, store, entry=entry)
@@ -1037,7 +1043,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
             if buffer_ is None or store is None:
                 continue
             entry = hass.config_entries.async_get_entry(entry_id)
-            blocked = get_blocked_entities(entry) if entry else frozenset()
+            blocked = get_blocked_entities(entry, hass) if entry else frozenset()
             areas = get_scan_areas(entry) if entry else frozenset()
             ctx = DetectorContext(
                 hass=hass,
@@ -1120,7 +1126,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 continue
             entry = hass.config_entries.async_get_entry(entry_id)
             blocked = (
-                get_blocked_entities(entry) if entry else frozenset()
+                get_blocked_entities(entry, hass) if entry else frozenset()
             )
             store_obj = entry_data["store"]
             summary = await run_rollup_batch(
@@ -1222,7 +1228,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
             from .ws_api import _find_automation_by_id
 
             preferred = get_preferred_agent_id(entry)
-            blocked = get_blocked_entities(entry) or frozenset()
+            blocked = get_blocked_entities(entry, hass) or frozenset()
             from datetime import UTC
             from datetime import datetime as _dt
             processed = 0

@@ -1982,7 +1982,7 @@ async def ws_scan_now(
         ctx = DetectorContext(
             hass=hass,
             event_buffer=entry_data["buffer"],
-            blocked_entities=get_blocked_entities(entry),
+            blocked_entities=get_blocked_entities(entry, hass),
             area_filter=get_scan_areas(entry),
         )
         try:

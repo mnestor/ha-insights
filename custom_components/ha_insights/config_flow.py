@@ -32,6 +32,11 @@ CONF_LOOKBACK_DAYS = "lookback_days"
 # gap users assumed already existed ("block this entity" now = "don't
 # scan AND don't send to LLM").
 CONF_LLM_BLOCK_ENTITIES = "llm_block_entities"
+# Device IDs whose entities are all blocked exactly like entries in
+# CONF_LLM_BLOCK_ENTITIES — including entities the device gains later.
+# Only the device's own entities: devices connected *via* a blocked
+# device (hub children) are not blocked.
+CONF_BLOCKED_DEVICES = "blocked_devices"
 # v1.7.7: device IDs the user has marked "managed externally". Insights
 # referencing any entity belonging to one of these devices are filtered
 # out of detector output entirely (different from the automatic
@@ -701,7 +706,9 @@ def get_digest_settings(entry: ConfigEntry) -> tuple[bool, int]:
     return bool(enabled_raw), hour
 
 
-def get_blocked_entities(entry: ConfigEntry) -> frozenset[str]:
+def get_blocked_entities(
+    entry: ConfigEntry, hass: Any | None = None
+) -> frozenset[str]:
     """Resolve the per-entity opt-out list.
 
     These entity_ids are NEVER scanned by any detector AND NEVER included
@@ -709,6 +716,10 @@ def get_blocked_entities(entry: ConfigEntry) -> frozenset[str]:
     floor below the redactor's mode-driven behavior. Unified scan + LLM
     scope as of v1.1; storage key (`llm_block_entities`) preserved for
     backwards compat with v1.0 installs.
+
+    With `hass`, also includes every entity currently registered to a
+    device in `blocked_devices` (resolved from the entity registry on
+    each call, so entities a blocked device gains later are covered).
     """
     raw = entry.options.get(
         CONF_LLM_BLOCK_ENTITIES,
@@ -721,7 +732,57 @@ def get_blocked_entities(entry: ConfigEntry) -> frozenset[str]:
         items = [str(s).strip() for s in raw if str(s).strip()]
     else:
         items = []
+    blocked_devices = get_blocked_devices(entry)
+    if hass is not None and blocked_devices:
+        from homeassistant.helpers import entity_registry as er
+
+        e_reg = er.async_get(hass)
+        for device_id in blocked_devices:
+            items.extend(
+                ent.entity_id
+                for ent in er.async_entries_for_device(
+                    e_reg, device_id, include_disabled_entities=True
+                )
+            )
     return frozenset(items)
+
+
+def get_blocked_devices(entry: ConfigEntry) -> frozenset[str]:
+    """Device IDs whose entities are blocked (see CONF_BLOCKED_DEVICES)."""
+    raw = entry.options.get(
+        CONF_BLOCKED_DEVICES,
+        entry.data.get(CONF_BLOCKED_DEVICES, []),
+    )
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        return frozenset(str(s).strip() for s in raw if str(s).strip())
+    return frozenset()
+
+
+def blocked_entity_checker(hass: Any, entry: ConfigEntry) -> Any:
+    """Predicate `entity_id -> bool` for the event buffer.
+
+    Checks the entity's device at call time rather than snapshotting
+    `get_blocked_entities(entry, hass)`, so an entity added to a blocked
+    device after setup is dropped from its very first state change.
+    Returns None when nothing is blocked (the buffer skips the check).
+    """
+    blocked_entities = get_blocked_entities(entry)
+    blocked_devices = get_blocked_devices(entry)
+    if not blocked_entities and not blocked_devices:
+        return None
+    from homeassistant.helpers import entity_registry as er
+
+    e_reg = er.async_get(hass)
+
+    def _is_blocked(entity_id: str) -> bool:
+        if entity_id in blocked_entities:
+            return True
+        if not blocked_devices:
+            return False
+        ent = e_reg.async_get(entity_id)
+        return ent is not None and ent.device_id in blocked_devices
+
+    return _is_blocked
 
 
 def get_scan_areas(entry: ConfigEntry) -> frozenset[str]:
@@ -885,6 +946,30 @@ def _area_multiselect(hass: Any) -> Any:
 
         return selector.AreaSelector(
             selector.AreaSelectorConfig(multiple=True)
+        )
+    except Exception:  # pragma: no cover
+        return list
+
+
+def _entity_multiselect(hass: Any) -> Any:
+    """Schema field for the entity blocklist (multi-pick)."""
+    try:
+        from homeassistant.helpers import selector
+
+        return selector.EntitySelector(
+            selector.EntitySelectorConfig(multiple=True)
+        )
+    except Exception:  # pragma: no cover
+        return list
+
+
+def _device_multiselect(hass: Any) -> Any:
+    """Schema field for the device blocklist (multi-pick)."""
+    try:
+        from homeassistant.helpers import selector
+
+        return selector.DeviceSelector(
+            selector.DeviceSelectorConfig(multiple=True)
         )
     except Exception:  # pragma: no cover
         return list
@@ -1078,6 +1163,8 @@ class HaInsightsOptionsFlow(OptionsFlow):
         self._audit_auto_rollup_enabled: bool = False
         self._enabled_detectors: list[str] | None = None
         self._scan_areas: list[str] = []
+        self._blocked_entities: list[str] = []
+        self._blocked_devices: list[str] = []
         self._scan_interval_hours: int = DEFAULT_SCAN_INTERVAL_HOURS
 
     async def async_step_init(
@@ -1636,6 +1723,8 @@ class HaInsightsOptionsFlow(OptionsFlow):
         # user hasn't customized (preserve v1.0 → v1.1 upgrade behavior).
         current_enabled_detectors = get_enabled_detectors(self.config_entry)
         current_scan_areas = sorted(get_scan_areas(self.config_entry))
+        current_blocked_entities = sorted(get_blocked_entities(self.config_entry))
+        current_blocked_devices = sorted(get_blocked_devices(self.config_entry))
         current_scan_interval = get_scan_interval_hours(self.config_entry)
         # v1.1 audit options. All three default-safe when unset.
         current_rollup_window = get_audit_rollup_window_days(self.config_entry)
@@ -1771,6 +1860,23 @@ class HaInsightsOptionsFlow(OptionsFlow):
                 if isinstance(raw_areas, (list, tuple, set, frozenset))
                 else []
             )
+            # Entity / device blocklists (devices block all their entities).
+            raw_blocked = user_input.get(
+                CONF_LLM_BLOCK_ENTITIES, current_blocked_entities
+            )
+            self._blocked_entities = (
+                sorted({str(s) for s in raw_blocked})
+                if isinstance(raw_blocked, (list, tuple, set, frozenset))
+                else []
+            )
+            raw_blocked_devices = user_input.get(
+                CONF_BLOCKED_DEVICES, current_blocked_devices
+            )
+            self._blocked_devices = (
+                sorted({str(s) for s in raw_blocked_devices})
+                if isinstance(raw_blocked_devices, (list, tuple, set, frozenset))
+                else []
+            )
             # Phase D: scan interval (hours).
             self._scan_interval_hours = int(
                 user_input.get(CONF_SCAN_INTERVAL_HOURS, current_scan_interval)
@@ -1864,6 +1970,8 @@ class HaInsightsOptionsFlow(OptionsFlow):
                     ),
                     CONF_ENABLED_DETECTORS: self._enabled_detectors,
                     CONF_SCAN_AREAS: self._scan_areas,
+                    CONF_LLM_BLOCK_ENTITIES: self._blocked_entities,
+                    CONF_BLOCKED_DEVICES: self._blocked_devices,
                     CONF_SCAN_INTERVAL_HOURS: self._scan_interval_hours,
                     "audit_rollup_window_days": self._audit_rollup_window_days,
                     "audit_analysis_depth": self._audit_analysis_depth,
@@ -2052,6 +2160,13 @@ class HaInsightsOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_SCAN_AREAS, default=current_scan_areas
                 ): _area_multiselect(self.hass),
+                # Blocklists: never buffered, scanned or sent to the LLM.
+                vol.Optional(
+                    CONF_LLM_BLOCK_ENTITIES, default=current_blocked_entities
+                ): _entity_multiselect(self.hass),
+                vol.Optional(
+                    CONF_BLOCKED_DEVICES, default=current_blocked_devices
+                ): _device_multiselect(self.hass),
                 # Phase D: periodic auto-scan. 0 = manual only (default
                 # for v1.0 → v1.1 upgrades). 1 = every hour, etc.
                 vol.Optional(
@@ -2173,6 +2288,8 @@ class HaInsightsOptionsFlow(OptionsFlow):
                         ),
                         CONF_ENABLED_DETECTORS: self._enabled_detectors,
                         CONF_SCAN_AREAS: self._scan_areas,
+                        CONF_LLM_BLOCK_ENTITIES: self._blocked_entities,
+                        CONF_BLOCKED_DEVICES: self._blocked_devices,
                         CONF_SCAN_INTERVAL_HOURS: self._scan_interval_hours,
                         # The cloud_consent branch was missing the 4
                         # audit_* fields the user may have just edited in

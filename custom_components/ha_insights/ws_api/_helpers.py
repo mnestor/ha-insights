@@ -134,7 +134,7 @@ def _resolve_blocked_entities(hass: HomeAssistant, getter) -> frozenset[str]:
     """
     blocked: set[str] = set()
     for entry in hass.config_entries.async_entries(DOMAIN):
-        blocked |= getter(entry)
+        blocked |= getter(entry, hass)
     return frozenset(blocked)
 
 
