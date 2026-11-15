@@ -115,8 +115,11 @@ class StateEventBuffer:
     # *entity's* whole multi-day history from the front of the deque.
     # Sensor events now only evict other sensor events. Backfill never
     # loads these domains, so the pool only ever holds live data anyway.
+    # Sized so the 48 h age limit, not the cap, normally bounds the pool:
+    # 1M covers ~350 events/min for 48 h. A live sensor event measures
+    # ~345 B (tracemalloc), so the pool tops out around 345 MB.
     SENSOR_DOMAINS: frozenset[str] = frozenset({"sensor"})
-    DEFAULT_SENSOR_MAX_EVENTS = 200_000
+    DEFAULT_SENSOR_MAX_EVENTS = 1_000_000
     DEFAULT_SENSOR_MAX_AGE = timedelta(hours=48)
 
     def __init__(
